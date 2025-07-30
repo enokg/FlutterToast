@@ -55,8 +55,14 @@ internal class MethodCallHandlerImpl(private var context: Context) : MethodCallH
                     } else {
                        // context.resources.getDrawable(R.drawable.corner)
                         ContextCompat.getDrawable(context, R.drawable.corner)
+                       }
+                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        gradientDrawable!!.colorFilter = BlendModeColorFilter(bgcolor.toInt(), BlendMode.SRC_IN)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        gradientDrawable!!.setColorFilter(bgcolor.toInt(), PorterDuff.Mode.SRC_IN)
                     }
-                    gradientDrawable!!.setColorFilter(bgcolor.toInt(), PorterDuff.Mode.SRC_IN)
+
                     text.background = gradientDrawable
 
                     if (fontSize != null) {
