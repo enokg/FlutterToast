@@ -3,8 +3,7 @@ package io.github.ponnamkarthik.toast.fluttertoast
 import android.app.Activity
 import android.content.Context
 import android.content.res.AssetManager
-import android.graphics.PorterDuff
-import android.graphics.Typeface
+import android.graphics.*
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.view.Gravity
@@ -22,124 +21,81 @@ internal class MethodCallHandlerImpl(private var context: Context) : MethodCallH
 
     private var mToast: Toast? = null
 
-    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result,) {
-        when (call.method) {
-            "showToast" -> {
-                val mMessage = call.argument<Any>("msg").toString()
-                val length = call.argument<Any>("length").toString()
-                val gravity = call.argument<Any>("gravity").toString()
-                val bgcolor = call.argument<Number>("bgcolor")
-                val textcolor = call.argument<Number>("textcolor")
-                val fontSize = call.argument<Number>("fontSize")
-                val fontAsset = call.argument<String>("fontAsset")
+    override fun onMethodCall(call: MethodCall, rawResult: MethodChannel.Result) {
+    if (this.activity == null) {
+        rawResult.error(
+            "no_activity",
+            "file picker plugin requires a foreground activity",
+            null
+        )
+        return
+    }
 
-                val mGravity: Int = when (gravity) {
-                    "top" -> Gravity.TOP
-                    "center" -> Gravity.CENTER
-                    else -> Gravity.BOTTOM
-                }
+    val result: MethodChannel.Result = MethodResultWrapper(rawResult)
+    val arguments = call.arguments as? HashMap<*, *>
+    val method = call.method
 
-                val mDuration: Int = if (length == "long") {
-                    Toast.LENGTH_LONG
-                } else {
-                    Toast.LENGTH_SHORT
-                }
+    when (method) {
+        "clear" -> {
+            result.success(activity?.applicationContext?.let { clearCache(it) })
+        }
 
-                if (bgcolor != null) {
-                    val layout = (context.getSystemService(Context.LAYOUT_INFLATER_SERVICE,) as LayoutInflater).inflate(R.layout.toast_custom, null,)
-                    val text = layout.findViewById<TextView>(R.id.text,)
-                    text.text = mMessage
+        "save" -> {
+            val type = resolveType(arguments?.get("fileType") as String)
+            val initialDirectory = arguments["initialDirectory"] as String?
+            val bytes = arguments["bytes"] as ByteArray?
+            val fileNameWithoutExtension = "${arguments["fileName"]}"
+            val fileName =
+                if (fileNameWithoutExtension.isNotEmpty() && !fileNameWithoutExtension.contains(".")) {
+                    "$fileNameWithoutExtension.${getFileExtension(bytes)}"
+                } else fileNameWithoutExtension
+            delegate?.saveFile(fileName, type, initialDirectory, bytes, result)
+        }
 
-                    val gradientDrawable: Drawable? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                        context.getDrawable(R.drawable.corner)!!
-                    } else {
-                       // context.resources.getDrawable(R.drawable.corner)
-                        ContextCompat.getDrawable(context, R.drawable.corner)
-                       }
-                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        gradientDrawable!!.colorFilter = BlendModeColorFilter(bgcolor.toInt(), BlendMode.SRC_IN)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        gradientDrawable!!.setColorFilter(bgcolor.toInt(), PorterDuff.Mode.SRC_IN)
-                    }
+        "custom" -> {
+            @Suppress("UNCHECKED_CAST")
+            val allowedExtensions = arguments?.get("allowedExtensions") as? ArrayList<String>
 
-                    text.background = gradientDrawable
-
-                    if (fontSize != null) {
-                        text.textSize = fontSize.toFloat()
-                    }
-                    if (textcolor != null) {
-                        text.setTextColor(textcolor.toInt())
-                    }
-
-                    mToast = Toast(context,)
-                    mToast?.duration = mDuration
-
-                    if (fontAsset != null) {
-                        val assetManager: AssetManager = context.assets
-                        val key = FlutterInjector.instance().flutterLoader().getLookupKeyForAsset(fontAsset)
-                        text.typeface = Typeface.createFromAsset(assetManager, key);
-                    }
-                    mToast?.view = layout
-                } else {
-                    Log.d("KARTHIK", "showToast: $bgcolor $textcolor $fontSize $fontAsset")
-                    mToast = Toast.makeText(context, mMessage, mDuration)
-                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-                        val textView: TextView = mToast?.view!!.findViewById(android.R.id.message)
-                        if (fontSize != null) {
-                            textView.textSize = fontSize.toFloat()
-                        }
-                        if (textcolor != null) {
-                            textView.setTextColor(textcolor.toInt())
-                        }
-                        if (fontAsset != null) {
-                            val assetManager: AssetManager = context.assets
-                            val key = FlutterInjector.instance().flutterLoader().getLookupKeyForAsset(fontAsset)
-                            textView.typeface = Typeface.createFromAsset(assetManager, key);
-                        }
-                    }
-                }
-
-                try {
-                    when (mGravity) {
-                        Gravity.CENTER -> {
-                            mToast?.setGravity(mGravity, 0, 0,)
-                        }
-                        Gravity.TOP -> {
-                            mToast?.setGravity(mGravity, 0, 100,)
-                        }
-                        else -> {
-                            mToast?.setGravity(mGravity, 0, 100,)
-                        }
-                    }
-                } catch (e: Exception,) { }
-
-                if (context is Activity) {
-                    (context as Activity).runOnUiThread { mToast?.show() }
-                } else {
-                    mToast?.show()
-                }
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    mToast?.addCallback(
-                        object : Toast.Callback() {
-                            override fun onToastHidden() {
-                                super.onToastHidden()
-                                mToast = null
-                            }
-                        },
-                    )
-                }
-                result.success(true,)
+            if (allowedExtensions.isNullOrEmpty()) {
+                result.error(
+                    TAG,
+                    "Unsupported filter. Ensure using extension without dot (e.g., jpg, not .jpg).",
+                    null
+                )
+            } else {
+                val mimeTypes = getMimeTypes(allowedExtensions)
+                delegate?.startFileExplorer(
+                    resolveType(method),
+                    arguments["allowMultipleSelection"] as? Boolean,
+                    arguments["withData"] as? Boolean,
+                    mimeTypes,
+                    arguments["compressionQuality"] as? Int,
+                    result
+                )
             }
-            "cancel" -> {
-                if (mToast != null) {
-                    mToast?.cancel()
-                    mToast = null
-                }
-                result.success(true,)
+        }
+
+        else -> {
+            val fileType = resolveType(method)
+            if (fileType == null) {
+                result.notImplemented()
+                return
             }
-            else -> result.notImplemented()
+
+            @Suppress("UNCHECKED_CAST")
+            val allowedExtensions = arguments?.get("allowedExtensions") as? ArrayList<String>
+            val mimeTypes = getMimeTypes(allowedExtensions)
+
+            delegate?.startFileExplorer(
+                fileType,
+                arguments?.get("allowMultipleSelection") as? Boolean,
+                arguments?.get("withData") as? Boolean,
+                mimeTypes,
+                arguments?.get("compressionQuality") as? Int,
+                result
+            )
         }
     }
+}
+
 }
